@@ -1,0 +1,28 @@
+{
+  "evaluation_criteria": [
+    {
+      "criterion_id": "accuracy_and_groundedness",
+      "description": "Check whether technical information is accurate and supported by the reference material."
+    },
+    {
+      "criterion_id": "beginner_friendly",
+      "description": "Check whether the lesson uses simple English and explains concepts gradually for beginners."
+    },
+    {
+      "criterion_id": "teaching_by_example",
+      "description": "Check whether relevant practical examples are included and explained clearly."
+    },
+    {
+      "criterion_id": "clear_language_and_jargon",
+      "description": "Check whether technical terms are explained and unnecessary jargon is avoided."
+    },
+    {
+      "criterion_id": "key_topic_coverage",
+      "description": "Check whether the important concepts, definitions, benefits, limitations and working process are covered."
+    },
+    {
+      "criterion_id": "teaching_flow",
+      "description": "Check whether the lesson follows a logical structure with an introduction and conclusion."
+    }
+  ]
+}

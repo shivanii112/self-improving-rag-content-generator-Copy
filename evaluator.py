@@ -1,42 +1,139 @@
 import json
+from pathlib import Path
 
 from config import get_client, GEMINI_MODEL
 from prompts import EVALUATION_PROMPT
 
 
-# The evaluator must return exactly these six criteria.
+# --------------------------------------------------
+# 1. PROJECT PATHS
+# --------------------------------------------------
+
+PROJECT_DIR = Path(__file__).resolve().parent
+
+RUBRIC_FILE = PROJECT_DIR / "rubric.json"
+
+
+# --------------------------------------------------
+# 2. LOAD EVALUATION RUBRIC
+# --------------------------------------------------
+
+def load_rubric():
+    """
+    Load evaluation criteria from rubric.json.
+    """
+
+    if not RUBRIC_FILE.exists():
+        raise FileNotFoundError(
+            f"Evaluation rubric not found: {RUBRIC_FILE}"
+        )
+
+    try:
+        with open(RUBRIC_FILE, "r", encoding="utf-8") as file:
+            rubric = json.load(file)
+
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "rubric.json contains invalid JSON."
+        ) from exc
+
+    criteria = rubric.get("evaluation_criteria")
+
+    if not isinstance(criteria, list) or not criteria:
+        raise ValueError(
+            "rubric.json must contain a non-empty "
+            "evaluation_criteria list."
+        )
+
+    criterion_ids = []
+
+    for item in criteria:
+
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Each evaluation criterion must be a JSON object."
+            )
+
+        criterion_id = item.get("criterion_id")
+        description = item.get("description")
+
+        if not isinstance(criterion_id, str) or not criterion_id.strip():
+            raise ValueError(
+                "Every criterion must have a valid criterion_id."
+            )
+
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(
+                "Every criterion must have a valid description."
+            )
+
+        criterion_ids.append(criterion_id)
+
+    if len(criterion_ids) != len(set(criterion_ids)):
+        raise ValueError(
+            "Duplicate criterion IDs found in rubric.json."
+        )
+
+    return criteria
+
+
+# Load the expected criteria from the JSON rubric.
+RUBRIC = load_rubric()
+
 EXPECTED_CRITERIA = {
-    "accuracy_and_groundedness",
-    "beginner_friendly",
-    "teaching_by_example",
-    "clear_language_and_jargon",
-    "key_topic_coverage",
-    "teaching_flow",
+    item["criterion_id"]
+    for item in RUBRIC
 }
 
 
+# --------------------------------------------------
+# 3. EVALUATE GENERATED CONTENT
+# --------------------------------------------------
+
 def evaluate_content(content):
     """
-    Evaluate generated lesson content against
-    six mandatory quality criteria.
+    Evaluate generated lesson content using
+    the criteria defined in rubric.json.
     """
+
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(
+            "Content to evaluate cannot be empty."
+        )
 
     client = get_client()
 
+    # Prepare evaluation criteria for Gemini.
+    criteria_description = "\n".join(
+        [
+            f"{index}. {item['criterion_id']}: "
+            f"{item['description']}"
+            for index, item in enumerate(RUBRIC, start=1)
+        ]
+    )
+
     prompt = f"""
     {EVALUATION_PROMPT}
+
+    EVALUATION CRITERIA:
+
+    {criteria_description}
 
     CONTENT TO EVALUATE:
 
     {content}
 
-    Important:
-    Return exactly six criteria.
-    Include each expected criterion ID only once.
-    Return valid JSON using the required structure.
+    IMPORTANT INSTRUCTIONS:
+
+    1. Evaluate using exactly the criteria provided above.
+    2. Return every criterion ID exactly once.
+    3. Each criterion must have PASS or FAIL status.
+    4. Include a specific reason for every decision.
+    5. Include an actionable improvement suggestion.
+    6. Return valid JSON only.
     """
 
-    # Ask Gemini to evaluate the lesson.
+    # Ask Gemini to evaluate the generated content.
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
@@ -50,9 +147,10 @@ def evaluate_content(content):
             "Evaluator returned an empty response."
         )
 
-    # Convert Gemini's JSON response into a Python dictionary.
+    # Convert Gemini's JSON response into Python.
     try:
         result = json.loads(response.text)
+
     except json.JSONDecodeError as exc:
         raise ValueError(
             "Evaluator returned invalid JSON."
@@ -65,21 +163,28 @@ def evaluate_content(content):
 
     criteria = result.get("criteria")
 
-    # Check that exactly six criteria were returned.
-    if not isinstance(criteria, list) or len(criteria) != 6:
+    expected_count = len(EXPECTED_CRITERIA)
+
+    # Validate the number of returned criteria.
+    if not isinstance(criteria, list) or len(criteria) != expected_count:
         raise ValueError(
-            "Evaluator must return exactly six criteria."
+            f"Evaluator must return exactly {expected_count} criteria."
         )
 
-    # Check that all expected IDs are present without duplicates.
-    criterion_ids = [
-        item.get("criterion_id")
-        for item in criteria
-        if isinstance(item, dict)
-    ]
+    # Validate criterion IDs and prevent duplicates.
+    criterion_ids = []
+
+    for item in criteria:
+
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Each returned criterion must be a JSON object."
+            )
+
+        criterion_ids.append(item.get("criterion_id"))
 
     if (
-        len(criterion_ids) != 6
+        len(criterion_ids) != len(set(criterion_ids))
         or set(criterion_ids) != EXPECTED_CRITERIA
     ):
         raise ValueError(
@@ -107,12 +212,17 @@ def evaluate_content(content):
         item["status"] = status
 
         for field in ("reason", "improvement_suggestion"):
-            if not isinstance(item.get(field), str) or not item[field].strip():
+
+            if (
+                not isinstance(item.get(field), str)
+                or not item[field].strip()
+            ):
                 raise ValueError(
-                    f"Each criterion must include a non-empty {field}."
+                    f"Each criterion must include "
+                    f"a non-empty {field}."
                 )
 
-    # Python independently decides the final result.
+    # Python independently determines the final result.
     all_passed = all(
         item["status"] == "PASS"
         for item in criteria
